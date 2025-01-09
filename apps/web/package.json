@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "build:css": "tailwindcss -i ./input.css -o ./public/compiled-tailwind.css --minify",
-    "combine-css": "node css/combinedCSS.js"
+    "combine-css": "node css/combinedCSS.js",
+    "purge": "tsx scripts/purge.ts"
   },
   "dependencies": {
     "@amplitude/analytics-browser": "^2.11.10",
@@ -60,7 +61,6 @@
     "clsx": "^2.1.1",
     "cmdk": "1.0.0",
     "date-fns": "^4.1.0",
-    "dotenv": "^16.4.5",
     "endent": "^2.1.0",
     "ffmpeg": "^0.0.4",
     "framer-motion": "^11.11.10",
@@ -94,10 +94,12 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "dotenv": "^16.4.5",
     "eslint": "^8",
     "eslint-config-next": "14.2.6",
     "supabase": "link:supabase/tap/supabase",
     "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.4.5"
   }
 }
