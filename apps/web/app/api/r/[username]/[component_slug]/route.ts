@@ -4,11 +4,18 @@ import { ComponentRegistryResponse } from "./types"
 import { resolveRegistryDependencyTree } from "@/lib/queries.server"
 import { Tables } from "@/types/supabase"
 import { extractCssVars } from "@/lib/parsers"
+import { AnalyticsActivityType } from "@/types/global"
 
 // registry:hooks in 21st.dev -> registry:hook in shadcn/ui
 const getShadcnRegistrySlug = (registryName: string) => {
   if (registryName === "hooks") {
     return "registry:hook"
+  }
+  if (registryName === "blocks") {
+    return "registry:block"
+  }
+  if (registryName === "icons") {
+    return "registry:ui"
   }
   return `registry:${registryName}`
 }
@@ -18,22 +25,59 @@ export async function GET(
   { params }: { params: { username: string; component_slug: string } },
 ) {
   const { username, component_slug } = params
+  console.log("🔍 Fetching component:", { username, component_slug })
 
   try {
+    console.log("📊 Executing Supabase query...")
+    const { data: user, error: userError } = await supabaseWithAdminAccess
+      .from("users")
+      .select("*")
+      .or(`username.eq.${username},display_username.eq.${username}`)
+      .single()
+
+    if (userError) {
+      console.error("❌ User error:", userError)
+      throw new Error(`Error fetching user: ${userError.message}`)
+    }
+
+    if (!user) {
+      console.log("⚠️ User not found")
+      return NextResponse.json({ error: "User not found" }, { status: 404 })
+    }
+
     const { data: component, error } = await supabaseWithAdminAccess
       .from("components")
       .select("*, user:users!user_id(*)")
       .eq("component_slug", component_slug)
-      .eq("user.username", username)
+      .eq("user_id", user.id)
       .not("user", "is", null)
       .returns<(Tables<"components"> & { user: Tables<"users"> })[]>()
       .single()
 
+    console.log("📋 Query result:", {
+      hasData: !!component,
+      error: error
+        ? {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          }
+        : null,
+    })
+
     if (error) {
+      console.error("❌ Error details:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      })
       throw new Error(`Error fetching component: ${error.message}`)
     }
 
     if (!component) {
+      console.log("⚠️ Component not found")
       return NextResponse.json(
         { error: "Component not found" },
         { status: 404 },
@@ -56,6 +100,21 @@ export async function GET(
             console.error("Error incrementing downloads count:", error)
           } else {
             console.log("Downloads count incremented")
+          }
+        })
+
+      supabaseWithAdminAccess
+        .from("component_analytics")
+        .insert({
+          component_id: component.id,
+          activity_type: AnalyticsActivityType.COMPONENT_CLI_DOWNLOAD,
+          created_at: new Date().toISOString(),
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.error("Error capturing analytics:", error)
+          } else {
+            console.log("Analytics captured")
           }
         })
     }
@@ -109,7 +168,6 @@ export async function GET(
               /module\.exports\s*=\s*({[\s\S]*})/,
             )
             if (!configMatch?.[1]) {
-              console.log("No config match found")
               return {}
             }
 
@@ -124,7 +182,6 @@ export async function GET(
               /"theme"\s*:\s*({[^}]*(?:}[^}]*)*})/,
             )
             if (!themeMatch?.[1]) {
-              console.log("No theme object found")
               return {}
             }
 
@@ -133,7 +190,6 @@ export async function GET(
               /"extend"\s*:\s*({[^}]*(?:}[^}]*)*})[^}]*$/,
             )
             if (!extendMatch?.[1]) {
-              console.log("No extend object found")
               return {}
             }
 
@@ -145,22 +201,36 @@ export async function GET(
               .replace(/}\s*}/g, "}") // Remove whitespace between closing braces
               .replace(/}(?!}|$)/g, "},") // Add commas between objects where missing
               .replace(/,+/g, ",") // Remove any remaining multiple commas
+              // Handle template literals with data URLs
+              .replace(/`([^`]*)`/g, function (match, p1) {
+                return JSON.stringify(p1)
+              })
+              // Quote unquoted property names, but skip already quoted ones
+              .replace(/([{,]\s*)(?!")([a-zA-Z0-9-]+):/g, '$1"$2":')
+              // Remove any remaining trailing commas
+              .replace(/,(\s*})/g, "$1")
               .trim()
 
-            // Count opening and closing braces
-            const openBraces = (cleanThemeExtend.match(/{/g) || []).length
-            const closeBraces = (cleanThemeExtend.match(/}/g) || []).length
-
-            // Add missing closing braces
-            if (openBraces > closeBraces) {
-              cleanThemeExtend += "}".repeat(openBraces - closeBraces)
+            try {
+              const parsed = JSON.parse(cleanThemeExtend)
+              return { theme: { extend: parsed } }
+            } catch (error) {
+              // If parsing fails, try a simpler approach
+              const simpleObject = {
+                backgroundImage: {
+                  "grid-pattern":
+                    tailwindConfig.match(
+                      /['"]grid-pattern['"]:\s*`([^`]*)`/,
+                    )?.[1] || "",
+                  "grid-pattern-light":
+                    tailwindConfig.match(
+                      /['"]grid-pattern-light['"]:\s*`([^`]*)`/,
+                    )?.[1] || "",
+                },
+              }
+              return { theme: { extend: simpleObject } }
             }
-
-            // Try to parse and re-stringify to ensure valid JSON
-            const parsed = JSON.parse(cleanThemeExtend)
-            return { theme: { extend: parsed } }
           } catch (error) {
-            console.error("Error parsing tailwind theme.extend:", error)
             throw error
           }
         })()
